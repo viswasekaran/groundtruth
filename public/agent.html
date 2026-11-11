@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Agent console — GroundTruth</title>
+  <link rel="stylesheet" href="/css/app.css" />
+</head>
+<body>
+  <main class="wrap">
+    <div class="grid two">
+      <!-- LEFT: mission -->
+      <section class="card">
+        <div class="row">
+          <h2 style="margin:0">Atlas, your concierge agent</h2>
+          <span class="spacer"></span>
+          <select id="missionPicker" style="width:auto;max-width:240px"></select>
+        </div>
+        <p class="muted small" style="margin-top:0">Ask about anything that depends on the <b>current</b> state of a real place. Atlas decides when to pay a nearby human for live, verified evidence.</p>
+
+        <div class="chat" id="chat"><div class="muted small">No mission yet. Try one of the examples below.</div></div>
+
+        <form id="missionForm" style="margin-top:1rem">
+          <textarea id="goal" rows="2" placeholder="e.g. I want to work from a quiet café near me in the next 30 minutes. Is there one with free tables right now?"></textarea>
+          <div class="row" style="margin-top:.5rem">
+            <select id="loc" style="width:auto">
+              <option value="gps">Use my location</option>
+              <option value="37.7793,-122.4193">San Francisco</option>
+              <option value="40.7411,-73.9897">New York</option>
+              <option value="51.5136,-0.1365">London</option>
+              <option value="12.9719,77.6412">Bengaluru</option>
+              <option value="13.0418,80.2341">Chennai</option>
+            </select>
+            <span class="muted small" id="locLabel"></span>
+            <span class="spacer"></span>
+            <button class="primary" id="go">Send to Atlas →</button>
+          </div>
+          <div class="row small" style="margin-top:.6rem;gap:.4rem" id="examples"></div>
+        </form>
+      </section>
+
+      <!-- RIGHT: wallet, policy, reviews -->
+      <aside class="grid" style="align-content:start">
+        <section class="card dark">
+          <h3>Agent wallet</h3>
+          <div class="wallet-amount" id="available">$0.00</div>
+          <div class="muted small" id="walletSub"></div>
+          <label for="amount">Top up with PayPal</label>
+          <div class="row">
+            <select id="amount" style="width:110px">
+              <option value="10">$10</option><option value="25" selected>$25</option><option value="50">$50</option>
+            </select>
+            <div id="paypal-buttons" style="flex:1;min-width:200px"></div>
+          </div>
+          <p class="muted small" id="fundNote"></p>
+        </section>
+
+        <section class="card">
+          <h3>Spending policy (agent firewall)</h3>
+          <dl class="kv" id="policy"></dl>
+          <p class="muted small">Enforced in server code before every bounty. The agent can't override it, and a blocked attempt shows up in the chat.</p>
+        </section>
+
+        <section class="card">
+          <h3>Needs your review</h3>
+          <div id="reviews" class="small muted">Nothing to review.</div>
+        </section>
+
+        <section class="card">
+          <h3>Atlas's bounties</h3>
+          <div id="myBounties" class="small muted">None yet.</div>
+        </section>
+      </aside>
+    </div>
+  </main>
+
+  <script type="module">
+    import { $, api, esc, usd, topbar, live, toast, getPosition, until } from '/js/common.js';
+
+    const status = await topbar();
+    let current = null; // mission id
+    let missions = [];
+
+    // ------------------------------------------------ examples
+    const EXAMPLES = [
+      'I want to work from a quiet café near me in the next 30 minutes. Find one with free tables right now.',
+      'Is the nearest pharmacy open right now, and is there a queue?',
+      'Before I drive over: is the street in front of the main train station flooded or blocked right now?',
+    ];
+    $('#examples').innerHTML = EXAMPLES.map((e, i) => `<button type="button" data-i="${i}" class="small chip">${esc(e.slice(0, 48))}…</button>`).join('');
+    $('#examples').onclick = (e) => { const i = e.target.dataset.i; if (i !== undefined) $('#goal').value = EXAMPLES[i]; };
+
+    // ------------------------------------------------ location
+    async function resolveLocation() {
+      const v = $('#loc').value;
+      if (v !== 'gps') { const [lat, lng] = v.split(',').map(Number); return { lat, lng }; }
+      try { const p = await getPosition(); $('#locLabel').textContent = `±${Math.round(p.accuracy)} m`; return p; }
+      catch (e) { toast(`Location unavailable (${e.message}). Pick a city instead.`); throw e; }
+    }
+
+    // ------------------------------------------------ missions
+    $('#missionForm').onsubmit = async (e) => {
+      e.preventDefault();
+      const goal = $('#goal').value.trim();
+      if (!goal) return;
+      $('#go').disabled = true;
+      try {
+        const userLocation = await resolveLocation();
+        const m = await api('/api/missions', { json: { goal, userLocation } });
+        $('#goal').value = '';
+        current = m.id;
+        await loadMissions();
+      } catch (err) { if (err.message) toast(err.message); }
+      finally { $('#go').disabled = false; }
+    };
+
+    async function loadMissions() {
+      missions = await api('/api/missions');
+      if (!current && missions[0]) current = missions[0].id;
+      $('#missionPicker').innerHTML = missions.length
+        ? missions.map((m) => `<option value="${m.id}" ${m.id === current ? 'selected' : ''}>${esc(m.goal.slice(0, 40))}… (${m.status})</option>`).join('')
+        : '<option>No missions</option>';
+      renderChat();
+    }
+    $('#missionPicker').onchange = (e) => { current = e.target.value; renderChat(); };
+
+    function entryHtml(en) {
+      switch (en.kind) {
+        case 'user': return `<div class="msg user">${esc(en.text)}</div>`;
+        case 'agent': return `<div class="msg agent">${esc(en.text)}</div>`;
+        case 'thought': return `<div class="msg thought">${esc(en.text)}</div>`;
+        case 'tool': return `<div class="msg tool">→ <b>${esc(en.tool)}</b> ${esc(JSON.stringify(en.input))}</div>`;
+        case 'tool_result': {
+          const out = en.output;
+          if (en.tool === 'post_bounty' && out?.bounty_id)
+            return `<div class="msg tool">← bounty <a href="/bounty.html?id=${out.bounty_id}">${out.bounty_id}</a> posted · ${usd(out.reward_usd)} reserved from wallet</div>`;
+          const s = JSON.stringify(out);
+          return `<div class="msg tool">← ${esc(s.length > 220 ? s.slice(0, 220) + '…' : s)}</div>`;
+        }
+        case 'policy_block': return `<div class="msg policy_block">${esc(en.text)}</div>`;
+        case 'event': return `<div class="msg event">${esc(en.text)} <a href="/bounty.html?id=${en.bountyId}">see evidence</a></div>`;
+        default: return `<div class="msg error">${esc(en.text)}</div>`;
+      }
+    }
+
+    async function renderChat() {
+      if (!current) return;
+      const m = await api(`/api/missions/${current}`);
+      const chat = $('#chat');
+      chat.innerHTML = m.log.map(entryHtml).join('') +
+        (m.status === 'running' ? '<div class="muted small"><span class="spinner"></span> Atlas is thinking…</div>' : '') +
+        (m.status === 'waiting' ? '<div class="muted small">Waiting for a nearby human to capture live evidence…</div>' : '');
+      chat.scrollTop = chat.scrollHeight;
+    }
+
+    // ------------------------------------------------ wallet, policy, reviews, bounties
+    async function refreshSide() {
+      const s = await api('/api/status');
+      const a = s.agents.atlas;
+      $('#available').textContent = usd(a.wallet.available);
+      $('#walletSub').textContent = `Balance ${usd(a.wallet.balance)} · ${usd(a.wallet.reserved)} reserved in open bounties`;
+      const p = a.policy;
+      $('#policy').innerHTML = `
+        <dt>Max per bounty</dt><dd>${usd(p.maxBountyUsd)}</dd>
+        <dt>Daily cap</dt><dd>${usd(p.dailyCapUsd)} (${usd(p.remainingTodayUsd)} left today)</dd>
+        <dt>Wallet reserve</dt><dd>${usd(p.minWalletReserveUsd)}</dd>`;
+
+      const bounties = (await api('/api/bounties')).filter((b) => b.agentId === 'atlas');
+      $('#myBounties').innerHTML = bounties.length ? bounties.slice(0, 8).map((b) =>
+        `<a class="bounty-item" href="/bounty.html?id=${b.id}"><div class="row"><b>${esc(b.title)}</b><span class="spacer"></span><span class="reward">${usd(b.rewardUsd)}</span></div>
+         <div class="row small muted"><span class="status ${b.status}">${b.status}</span>${b.status === 'open' ? until(b.expiresAt) : ''} · ${b.submissionCount} submission(s)</div></a>`).join('') : 'None yet.';
+
+      const reviews = [];
+      for (const b of bounties.filter((x) => x.status === 'open' && x.submissionCount)) {
+        const d = await api(`/api/bounties/${b.id}`);
+        for (const sub of d.submissions.filter((x) => x.status === 'needs_review')) reviews.push({ b, sub });
+      }
+      $('#reviews').innerHTML = reviews.length ? reviews.map(({ b, sub }) => `
+        <div class="bounty-item">
+          <b>${esc(b.title)}</b>
+          <img src="${sub.photoUrl}" class="photo" style="margin:.5rem 0;max-height:180px;object-fit:cover" />
+          <div class="small muted">${sub.signals.filter((x) => x.status !== 'pass').map((x) => `${esc(x.label)}: ${esc(x.detail)}`).join('<br>')}</div>
+          <div class="small" style="margin:.4rem 0">AI answer: “${esc(sub.ai?.answer || sub.note || '—')}”</div>
+          <div class="row"><button class="dark" data-approve="${sub.id}">Approve & pay ${usd(b.rewardUsd)}</button><button class="danger" data-reject="${sub.id}">Reject</button></div>
+        </div>`).join('') : 'Nothing to review.';
+    }
+    $('#reviews').onclick = async (e) => {
+      const ap = e.target.dataset.approve, rj = e.target.dataset.reject;
+      if (!ap && !rj) return;
+      e.target.disabled = true;
+      try { await api(`/api/submissions/${ap || rj}/review`, { json: { action: ap ? 'approve' : 'reject' } }); toast(ap ? 'Approved, PayPal payout sent' : 'Rejected'); }
+      catch (err) { toast(err.message); }
+      refreshSide();
+    };
+
+    // ------------------------------------------------ PayPal funding
+    const amount = () => Number($('#amount').value);
+    async function captureAndCredit(orderId) {
+      const r = await api(`/api/wallet/atlas/orders/${orderId}/capture`, { json: {} });
+      toast(`Wallet funded: ${usd(r.capture.amount)} via PayPal`);
+      refreshSide();
+    }
+    if (status?.paypal.mode !== 'mock' && status?.paypal.clientId) {
+      const s = document.createElement('script');
+      s.src = `https://www.paypal.com/sdk/js?client-id=${encodeURIComponent(status.paypal.clientId)}&currency=USD&intent=capture`;
+      s.onload = () => paypal.Buttons({
+        style: { layout: 'horizontal', height: 40, tagline: false },
+        createOrder: async () => (await api('/api/wallet/atlas/orders', { json: { amount: amount() } })).id,
+        onApprove: async (data) => captureAndCredit(data.orderID),
+        onError: (err) => toast(`PayPal error: ${err?.message || err}`),
+      }).render('#paypal-buttons');
+      document.head.appendChild(s);
+      $('#fundNote').textContent = 'Sandbox mode: log in with a PayPal sandbox personal (buyer) account.';
+    } else {
+      $('#paypal-buttons').innerHTML = '<button class="gold" id="mockPay" style="width:100%">Pay with PayPal (mock)</button>';
+      $('#fundNote').textContent = 'Mock mode: add PAYPAL_CLIENT_ID / PAYPAL_CLIENT_SECRET to .env to use the real PayPal sandbox checkout.';
+      $('#mockPay').onclick = async () => {
+        const o = await api('/api/wallet/atlas/orders', { json: { amount: amount() } });
+        await captureAndCredit(o.id);
+      };
+    }
+
+    // ------------------------------------------------ live updates
+    live((ev) => {
+      if (ev.type === 'mission.log' || ev.type === 'mission.status') { if (ev.missionId === current) renderChat(); if (ev.type === 'mission.status') loadMissions(); }
+      else if (ev.type !== 'mission.started') refreshSide();
+    });
+    loadMissions();
+    refreshSide();
+  </script>
+</body>
+</html>

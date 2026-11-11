@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Trust report — GroundTruth</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="stylesheet" href="/css/app.css" />
+</head>
+<body>
+  <main class="wrap">
+    <div id="head" class="card" style="margin-bottom:1rem"></div>
+    <div class="grid two">
+      <section id="subs"></section>
+      <aside class="grid" style="align-content:start">
+        <div class="card"><h3>Location</h3><div id="map" class="map" style="height:260px"></div></div>
+        <div class="card" id="money"></div>
+      </aside>
+    </div>
+  </main>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script type="module">
+    import { $, api, esc, usd, topbar, live, hhmm, until, toast } from '/js/common.js';
+    await topbar();
+    const bid = new URLSearchParams(location.search).get('id');
+    let map, layer;
+
+    async function render() {
+      const { bounty: b, submissions } = await api(`/api/bounties/${bid}`);
+      document.title = `${b.title} — GroundTruth`;
+      $('#head').innerHTML = `
+        <div class="row"><span class="status ${b.status}">${b.status}</span><span class="muted small">posted by ${b.agentId === 'atlas' ? 'Atlas (Claude agent)' : 'external agent'} · ${hhmm(b.createdAt)}${b.status === 'open' ? ' · ' + until(b.expiresAt) : ''}</span><span class="spacer"></span><span class="reward" style="font-size:1.75rem">${usd(b.rewardUsd)}</span></div>
+        <h1 style="font-size:2.25rem;letter-spacing:-.035em;margin:.75rem 0 .5rem">${esc(b.title)}</h1>
+        <p style="margin:.2rem 0">${esc(b.question)}</p>
+        <div class="muted small">${esc(b.placeName)} · radius ${b.radiusM} m${b.answerHint ? ' · wants: ' + esc(b.answerHint) : ''}</div>
+        ${b.answer ? `<div class="answer" style="margin-top:.8rem"><b>Verified answer:</b> ${esc(b.answer)}</div>` : ''}
+        ${b.status === 'open' ? `<div class="row" style="margin-top:.8rem"><a class="btn primary" href="/hunter.html">Answer this on your phone</a><button id="cancel" class="danger">Cancel & refund wallet</button></div>` : ''}`;
+      if ($('#cancel')) $('#cancel').onclick = async () => { await api(`/api/bounties/${bid}/cancel`, { json: {} }); toast('Cancelled, reward returned to the wallet'); render(); };
+
+      $('#subs').innerHTML = submissions.length ? submissions.slice().reverse().map((s) => `
+        <div class="card" style="margin-bottom:1rem">
+          <div class="row"><div class="verdict ${s.reviewedBy && s.status !== 'needs_review' ? s.status : s.decision}">${s.reviewedBy ? (s.status === 'approved' ? 'Approved after human review' : 'Rejected by reviewer') : ({ approved: 'Approved automatically', needs_review: 'Needs review', rejected: 'Rejected' }[s.decision] || s.decision)}</div><span class="spacer"></span><span class="status ${s.status}">${s.status}</span></div>
+          <div class="muted small">Captured ${hhmm(s.capturedAt)} · received ${hhmm(s.receivedAt)}${s.reviewedBy ? ' · reviewed by owner' : ''}</div>
+          <div class="grid" style="grid-template-columns:1fr 1fr;margin-top:.8rem">
+            <img src="${s.photoUrl}" class="photo" alt="submitted photo" />
+            <div>
+              ${s.ai?.answer ? `<div class="answer">${esc(s.ai.answer)}</div>` : ''}
+              ${s.ai?.scene_description ? `<p class="small muted">${esc(s.ai.scene_description)}</p>` : ''}
+              ${typeof s.ai?.confidence === 'number' ? `<div class="small">AI confidence: <b>${Math.round(s.ai.confidence * 100)}%</b>${s.ai.model ? ` · ${esc(s.ai.model)}` : ''}</div>` : ''}
+              ${s.note ? `<p class="small">Hunter's note: “${esc(s.note)}”</p>` : ''}
+            </div>
+          </div>
+          <h3 style="margin-top:1rem">Trust signals</h3>
+          <ul class="signals">${(s.signals || []).map((x) => `<li class="${x.status}"><span class="icon">${x.status === 'pass' ? '✓' : x.status === 'warn' ? '!' : '✕'}</span><div><b>${esc(x.label)}</b><div class="small muted">${esc(x.detail)}</div></div></li>`).join('')}</ul>
+          ${s.ai?.reasoning ? `<p class="small muted" style="margin-top:.6rem"><b>Why.</b> ${esc(s.ai.reasoning)}</p>` : ''}
+          ${s.status === 'needs_review' && b.status === 'open' ? `<div class="row" style="margin-top:.6rem"><button class="dark" data-approve="${s.id}">Approve & pay</button><button class="danger" data-reject="${s.id}">Reject</button></div>` : ''}
+          ${s.payout ? `<div class="notice" style="margin-top:.8rem">PayPal payout ${usd(s.payout.amountUsd)} → ${esc(s.payout.receiver)} · <span class="status ${s.payout.status}">${esc(s.payout.status)}</span>${s.payout.mock ? ' (mock)' : ''}
+              ${s.payout.batchId ? `<div class="small muted">Batch ${esc(s.payout.batchId)}${s.payout.transactionId ? ' · txn ' + esc(s.payout.transactionId) : ''}</div>` : ''}
+              ${s.payout.error ? `<div class="small" style="color:var(--red)">${esc(s.payout.error)} <button data-retry="${s.payout.id}" class="small">Retry</button></div>` : ''}</div>` : ''}
+        </div>`).join('') : '<div class="card muted">No submissions yet. Waiting for a nearby human.</div>';
+
+      $('#money').innerHTML = `<h3>Money flow</h3><dl class="kv">
+        <dt>Reward</dt><dd>${usd(b.rewardUsd)}, reserved from the agent wallet</dd>
+        <dt>Funding</dt><dd>PayPal Checkout (Orders API v2)</dd>
+        <dt>Payout</dt><dd>PayPal Payouts API v1 to the hunter's PayPal email</dd>
+        <dt>If expired</dt><dd>Reserve returned to the wallet automatically</dd></dl>`;
+
+      if (!map) {
+        map = L.map('map').setView([b.lat, b.lng], 16);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap' }).addTo(map);
+        layer = L.layerGroup().addTo(map);
+      }
+      layer.clearLayers();
+      L.circle([b.lat, b.lng], { radius: b.radiusM, color: '#3D5AFE', weight: 1.5, dashArray: '4 4', fillColor: '#3D5AFE', fillOpacity: .08 }).addTo(layer);
+      L.circleMarker([b.lat, b.lng], { radius: 7, color: '#FFFFFF', weight: 3, fillColor: '#3D5AFE', fillOpacity: 1 }).addTo(layer);
+      for (const s of submissions) if (typeof s.location?.lat === 'number' && !s.location.simulated)
+        L.circleMarker([s.location.lat, s.location.lng], { radius: 6, color: '#FFFFFF', weight: 3, fillColor: s.decision === 'rejected' ? '#B91C1C' : '#18181B', fillOpacity: 1 }).bindPopup('Hunter position').addTo(layer);
+    }
+
+    $('#subs').onclick = async (e) => {
+      const { approve, reject, retry } = e.target.dataset;
+      try {
+        if (approve || reject) await api(`/api/submissions/${approve || reject}/review`, { json: { action: approve ? 'approve' : 'reject' } });
+        else if (retry) await api(`/api/payouts/${retry}/retry`, { json: {} });
+        else return;
+        render();
+      } catch (err) { toast(err.message); }
+    };
+    live((ev) => { if (ev.bountyId === bid) render(); });
+    render().catch((e) => ($('#head').innerHTML = `<div class="notice err">${esc(e.message)}</div>`));
+  </script>
+</body>
+</html>

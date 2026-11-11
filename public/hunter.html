@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#FAFAFA" />
+  <title>Earn — GroundTruth</title>
+  <link rel="stylesheet" href="/css/app.css" />
+</head>
+<body>
+  <main class="hunter">
+    <!-- STEP 1: list -->
+    <section id="listView">
+      <h1 style="font-size:1.5rem">Get paid to show AI the real world</h1>
+      <p class="muted small" style="margin-top:0">Pick a nearby task, snap a live photo, get paid to PayPal once it's verified.</p>
+
+      <div class="card" style="margin-bottom:.8rem">
+        <label for="email" style="margin-top:0">Your PayPal email (where rewards go)</label>
+        <input id="email" type="email" placeholder="you@example.com" autocomplete="email" />
+        <div class="row" style="margin-top:.6rem">
+          <span id="gpsState" class="small muted">Locating…</span>
+          <span class="spacer"></span>
+          <label class="small row hidden" id="simWrap" style="margin:0;gap:.3rem;cursor:pointer"><input type="checkbox" id="sim" style="width:auto" /> Demo: simulate GPS</label>
+        </div>
+      </div>
+      <div id="bounties"><div class="muted small">Loading tasks…</div></div>
+    </section>
+
+    <!-- STEP 2: capture -->
+    <section id="captureView" class="hidden">
+      <button id="back" class="small" style="margin-bottom:.6rem">← Tasks</button>
+      <div class="card" style="margin-bottom:.8rem">
+        <div class="row"><b id="cTitle"></b><span class="spacer"></span><span class="reward" id="cReward"></span></div>
+        <p id="cQuestion" style="margin:.4rem 0"></p>
+        <div class="muted small" id="cPlace"></div>
+      </div>
+      <div class="camera" id="camBox">
+        <video id="video" playsinline autoplay muted></video>
+        <img id="preview" class="hidden" alt="captured photo" />
+        <div class="hud"><span id="hudGps"></span><span id="hudTime"></span></div>
+      </div>
+      <div id="camError" class="notice warn hidden" style="margin-top:.6rem"></div>
+      <div style="margin:.9rem 0" id="shutterRow"><button class="shutter" id="shutter" aria-label="Take photo"></button></div>
+      <input type="file" id="fileFallback" accept="image/*" capture="environment" class="hidden" />
+      <div id="afterShot" class="hidden">
+        <label for="note">Optional note (what you see)</label>
+        <textarea id="note" rows="2" placeholder="e.g. Open, about 6 tables free, no queue"></textarea>
+        <div class="row" style="margin-top:.6rem">
+          <button id="retake">Retake</button><span class="spacer"></span>
+          <button class="primary" id="submit">Submit for verification</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- STEP 3: result -->
+    <section id="resultView" class="hidden">
+      <div class="card">
+        <div id="verifying"><span class="spinner"></span> Verifying your photo: location, freshness, originality, AI evidence check…</div>
+        <div id="result" class="hidden"></div>
+      </div>
+      <button id="again" class="big" style="margin-top:1rem">Find another task</button>
+    </section>
+  </main>
+
+  <script type="module">
+    import { $, api, esc, usd, topbar, toast, getPosition, until, live } from '/js/common.js';
+
+    const status = await topbar();
+    let pos = null, bounty = null, stream = null, shot = null, watchId = null;
+
+    // ------------------------------------------------ setup
+    $('#email').value = localStorage.getItem('gt_email') || '';
+    $('#email').onchange = () => localStorage.setItem('gt_email', $('#email').value.trim());
+    if (status?.allowSimulatedGps) $('#simWrap').classList.remove('hidden');
+    $('#sim').onchange = loadBounties;
+
+    function startGps() {
+      if (!navigator.geolocation) { $('#gpsState').textContent = 'No GPS on this device.'; return; }
+      watchId = navigator.geolocation.watchPosition(
+        (p) => {
+          pos = { lat: p.coords.latitude, lng: p.coords.longitude, accuracy: p.coords.accuracy };
+          $('#gpsState').innerHTML = `GPS ±${Math.round(pos.accuracy)} m`;
+          $('#hudGps').textContent = `GPS ±${Math.round(pos.accuracy)} m`;
+          if (!loaded) loadBounties();
+        },
+        (e) => { $('#gpsState').innerHTML = `<span style="color:var(--amber)">Location blocked: ${esc(e.message)}</span>`; if (!loaded) loadBounties(); },
+        { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 },
+      );
+    }
+    startGps();
+
+    // ------------------------------------------------ list
+    let loaded = false;
+    async function loadBounties() {
+      loaded = true;
+      const q = pos ? `?status=open&lat=${pos.lat}&lng=${pos.lng}` : '?status=open';
+      const list = (await api(`/api/bounties${q}`)).filter((b) => !b.expired);
+      if (pos) list.sort((a, b) => a.distanceM - b.distanceM);
+      $('#bounties').innerHTML = list.length ? list.map((b) => {
+        const near = b.distanceM !== undefined && b.distanceM <= b.radiusM;
+        return `<a class="bounty-item" href="#" data-id="${b.id}">
+          <div class="row"><b>${esc(b.title)}</b><span class="spacer"></span><span class="reward">${usd(b.rewardUsd)}</span></div>
+          <div class="small muted" style="margin:.3rem 0">${esc(b.question)}</div>
+          <div class="row small muted">
+            ${b.distanceM !== undefined ? `<span class="${near ? 'pill pass' : 'pill'}">${b.distanceM < 1000 ? b.distanceM + ' m' : (b.distanceM / 1000).toFixed(1) + ' km'} away${near ? ', you are in range' : ''}</span>` : ''}
+            <span>${until(b.expiresAt)}</span>
+          </div></a>`;
+      }).join('') : '<div class="card muted">No open tasks right now. Ask the agent console to post one, then come back.</div>';
+    }
+    $('#bounties').onclick = (e) => {
+      const a = e.target.closest('[data-id]');
+      if (!a) return;
+      e.preventDefault();
+      openCapture(a.dataset.id);
+    };
+
+    // ------------------------------------------------ capture
+    async function openCapture(id) {
+      if (!$('#email').value.trim()) { toast('Add your PayPal email first so we know where to pay you.'); $('#email').focus(); return; }
+      localStorage.setItem('gt_email', $('#email').value.trim());
+      bounty = (await api(`/api/bounties/${id}`)).bounty;
+      $('#cTitle').textContent = bounty.title;
+      $('#cReward').textContent = usd(bounty.rewardUsd);
+      $('#cQuestion').textContent = bounty.question;
+      $('#cPlace').textContent = `${bounty.placeName || ''} · be within ${bounty.radiusM} m`;
+      show('captureView');
+      resetShot();
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 } }, audio: false });
+        $('#video').srcObject = stream;
+        $('#camError').classList.add('hidden');
+      } catch (e) {
+        $('#camError').textContent = `Live camera unavailable (${e.message}). You can pick a photo instead, but it will need manual review. (Live camera needs HTTPS or localhost.)`;
+        $('#camError').classList.remove('hidden');
+        $('#shutter').onclick = () => $('#fileFallback').click();
+      }
+    }
+    setInterval(() => ($('#hudTime').textContent = new Date().toLocaleTimeString()), 1000);
+
+    function stopCamera() { stream?.getTracks().forEach((t) => t.stop()); stream = null; }
+    function resetShot() {
+      shot = null;
+      $('#preview').classList.add('hidden'); $('#video').classList.remove('hidden');
+      $('#afterShot').classList.add('hidden'); $('#shutterRow').classList.remove('hidden');
+      $('#shutter').onclick = takePhoto;
+    }
+
+    function toJpeg(source, w, h) {
+      const max = 1280, scale = Math.min(1, max / Math.max(w, h));
+      const c = document.createElement('canvas');
+      c.width = Math.round(w * scale); c.height = Math.round(h * scale);
+      c.getContext('2d').drawImage(source, 0, 0, c.width, c.height);
+      return new Promise((r) => c.toBlob((b) => r({ blob: b, url: c.toDataURL('image/jpeg', 0.85) }), 'image/jpeg', 0.85));
+    }
+
+    async function takePhoto() {
+      const v = $('#video');
+      if (!v.videoWidth) return toast('Camera not ready yet');
+      const { blob, url } = await toJpeg(v, v.videoWidth, v.videoHeight);
+      setShot(blob, url, 'camera');
+    }
+    $('#fileFallback').onchange = async (e) => {
+      const f = e.target.files[0]; if (!f) return;
+      const img = new Image(); img.src = URL.createObjectURL(f); await img.decode();
+      const { blob, url } = await toJpeg(img, img.naturalWidth, img.naturalHeight);
+      setShot(blob, url, 'file_input');
+    };
+    function setShot(blob, url, source) {
+      shot = { blob, source, capturedAt: new Date().toISOString(), pos: pos ? { ...pos } : null };
+      $('#preview').src = url;
+      $('#preview').classList.remove('hidden'); $('#video').classList.add('hidden');
+      $('#shutterRow').classList.add('hidden'); $('#afterShot').classList.remove('hidden');
+    }
+    $('#retake').onclick = resetShot;
+    $('#back').onclick = () => { stopCamera(); show('listView'); loadBounties(); };
+
+    // ------------------------------------------------ submit
+    $('#submit').onclick = async () => {
+      const simulated = $('#sim').checked;
+      let p = shot.pos;
+      if (!simulated) {
+        try { p = await getPosition({ timeout: 8000 }); } catch {}
+        if (!p) return toast('We need your GPS location to verify the photo. Allow location access and try again.');
+      }
+      const meta = simulated
+        ? { simulated: true, lat: bounty.lat, lng: bounty.lng, accuracy: 0, capturedAt: shot.capturedAt, source: shot.source }
+        : { lat: p.lat, lng: p.lng, accuracy: p.accuracy, capturedAt: shot.capturedAt, source: shot.source };
+      const fd = new FormData();
+      fd.append('photo', shot.blob, 'photo.jpg');
+      fd.append('meta', JSON.stringify(meta));
+      fd.append('paypalEmail', $('#email').value.trim());
+      fd.append('note', $('#note').value.trim());
+      stopCamera();
+      show('resultView');
+      $('#verifying').classList.remove('hidden'); $('#result').classList.add('hidden');
+      try {
+        const r = await api(`/api/bounties/${bounty.id}/submissions`, { method: 'POST', body: fd });
+        renderResult(r.submission);
+      } catch (e) {
+        $('#verifying').classList.add('hidden');
+        $('#result').classList.remove('hidden');
+        $('#result').innerHTML = `<div class="notice err">${esc(e.message)}</div>`;
+      }
+    };
+
+    let lastSub = null;
+    function renderResult(sub) {
+      lastSub = sub;
+      $('#verifying').classList.add('hidden');
+      const el = $('#result'); el.classList.remove('hidden');
+      const head = {
+        approved: `<div class="verdict approved">Verified. You're getting paid ${usd(bounty.rewardUsd)}</div>`,
+        needs_review: `<div class="verdict needs_review">Sent to the agent's owner for a quick review</div>`,
+        rejected: `<div class="verdict rejected">Not accepted</div>`,
+        superseded: `<div class="verdict rejected">Someone else answered first</div>`,
+      }[sub.status] || `<div class="verdict">${esc(sub.status)}</div>`;
+      el.innerHTML = `${head}
+        ${sub.ai?.answer ? `<div class="answer" style="margin:.8rem 0">${esc(sub.ai.answer)}</div>` : ''}
+        <ul class="signals">${sub.signals.map((s) => `<li class="${s.status}"><span class="icon">${s.status === 'pass' ? '✓' : s.status === 'warn' ? '!' : '✕'}</span><div><b>${esc(s.label)}</b><div class="small muted">${esc(s.detail)}</div></div></li>`).join('')}</ul>
+        <div id="payoutLine" class="notice" style="margin-top:.8rem">${sub.status === 'rejected' ? 'No payout for this submission.' : payoutHtml(sub.payout)}</div>
+        <p class="small"><a href="/bounty.html?id=${bounty.id}">Open the full trust report →</a></p>`;
+      if (sub.status === 'approved') refreshPayout();
+    }
+    function payoutHtml(p) {
+      if (!p) return 'Payout: waiting for approval.';
+      const cls = p.status === 'SUCCESS' ? 'ok' : p.status === 'FAILED' ? 'err' : '';
+      return `<span class="${cls}">PayPal payout ${usd(p.amountUsd)} to ${esc(p.receiver)}: <span class="status ${p.status}">${esc(p.status)}</span>${p.mock ? ' (mock)' : ''}${p.transactionId ? ` · txn ${esc(p.transactionId)}` : ''}${p.error ? `<br>${esc(p.error)}` : ''}</span>`;
+    }
+    async function refreshPayout() {
+      if (!lastSub || !bounty) return;
+      const d = await api(`/api/bounties/${bounty.id}`);
+      const sub = d.submissions.find((s) => s.id === lastSub.id);
+      const line = $('#payoutLine');
+      if (sub && line) line.innerHTML = payoutHtml(sub.payout);
+      if (sub && sub.status !== lastSub.status) renderResult(sub);
+    }
+    live((ev) => { if (bounty && ev.bountyId === bounty.id) refreshPayout(); });
+
+    $('#again').onclick = () => { show('listView'); loadBounties(); };
+    function show(id) { for (const v of ['listView', 'captureView', 'resultView']) $('#' + v).classList.toggle('hidden', v !== id); window.scrollTo(0, 0); }
+    setTimeout(() => { if (!loaded) loadBounties(); }, 2500);
+  </script>
+</body>
+</html>

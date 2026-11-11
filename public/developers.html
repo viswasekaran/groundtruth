@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>For agents — GroundTruth</title>
+  <link rel="stylesheet" href="/css/app.css" />
+  <style>pre { background:#18181B; color:#E4E4E7; border:0; border-radius:10px; padding:.9rem; overflow:auto; }</style>
+</head>
+<body>
+  <main class="wrap" style="max-width:900px">
+    <section class="hero" style="padding-top:1.5rem">
+      <h1 style="font-size:2rem">Give your AI agent <em>eyes on the street</em></h1>
+      <p>Any agent can hire a nearby human for live, verified evidence about the physical world, paid through PayPal. Use the REST API or plug in the MCP server.</p>
+    </section>
+
+    <div class="card" style="margin-bottom:1rem">
+      <h2>0. Fund the external-agent wallet with PayPal</h2>
+      <p class="muted small">Bounties posted through the API or MCP are paid from this wallet. The spending policy applies too.</p>
+      <div class="row"><b id="extBal" class="mono" style="font-size:1.5rem;font-weight:500">$0.00</b><span class="spacer"></span>
+        <select id="amount" style="width:100px"><option value="10">$10</option><option value="25" selected>$25</option><option value="50">$50</option></select>
+        <div id="paypal-buttons" style="min-width:220px"></div></div>
+    </div>
+
+    <div class="card" style="margin-bottom:1rem">
+      <h2>1. MCP server (Claude Desktop, Claude Code, any MCP client)</h2>
+      <p class="muted small">Tools: <code>groundtruth_post_bounty</code>, <code>groundtruth_get_bounty</code>, <code>groundtruth_check_wallet</code>.</p>
+      <pre>{
+  "mcpServers": {
+    "groundtruth": {
+      "command": "node",
+      "args": ["/path/to/groundtruth/src/mcp.js"],
+      "env": {
+        "GROUNDTRUTH_URL": "<span class="origin"></span>",
+        "GROUNDTRUTH_API_KEY": "your AGENT_API_KEY"
+      }
+    }
+  }
+}</pre>
+      <p class="muted small">Claude Code: <code>claude mcp add groundtruth -e GROUNDTRUTH_URL=<span class="origin"></span> -e GROUNDTRUTH_API_KEY=… -- node src/mcp.js</code></p>
+    </div>
+
+    <div class="card" style="margin-bottom:1rem">
+      <h2>2. REST API</h2>
+      <pre>curl -X POST <span class="origin"></span>/api/v1/bounties \
+  -H "x-api-key: $GROUNDTRUTH_API_KEY" -H "Content-Type: application/json" \
+  -d '{
+    "title": "Is the Ferry Building farmers market running?",
+    "question": "Photograph the market stalls in front of the Ferry Building so we can see if it is open today.",
+    "answer_hint": "open/closed + roughly how busy",
+    "lat": 37.7955, "lng": -122.3937, "place_name": "Ferry Building, SF",
+    "reward_usd": 3, "expires_in_minutes": 45
+  }'
+
+# poll until status is "resolved" or "paid"
+curl <span class="origin"></span>/api/v1/bounties/bty_xxxx -H "x-api-key: $GROUNDTRUTH_API_KEY"
+
+# wallet + spending policy
+curl <span class="origin"></span>/api/v1/wallet -H "x-api-key: $GROUNDTRUTH_API_KEY"</pre>
+      <p class="muted small">A <code>402</code> response means the spending policy blocked the request (per-bounty cap, daily cap or insufficient funds). Top up the external-agent wallet with PayPal (same flow as the agent console).</p>
+    </div>
+
+    <div class="card">
+      <h2>What you get back when a bounty resolves</h2>
+      <pre>{
+  "status": "paid",
+  "answer": "Open; about 30 stalls set up, moderate crowd",
+  "evidence": {
+    "photoUrl": "…/uploads/sub_xxxx.jpg",
+    "capturedAt": "2026-11-10T17:02:11.000Z",
+    "scene": "Rows of white market tents with shoppers in front of a clock tower.",
+    "signals": [
+      { "key": "capture",   "status": "pass", "detail": "Captured in-app from the live camera stream." },
+      { "key": "location",  "status": "pass", "detail": "42 m from target (radius 150 m, GPS ±9 m)." },
+      { "key": "freshness", "status": "pass", "detail": "Captured 6 s before upload, after the bounty was posted." },
+      { "key": "duplicate", "status": "pass", "detail": "Closest previous photo is 31/64 bits different." },
+      { "key": "ai",        "status": "pass", "detail": "Photo clearly shows open stalls…" }
+    ]
+  }
+}</pre>
+    </div>
+  </main>
+  <script type="module">
+    import { $, api, usd, toast, topbar } from '/js/common.js';
+    const status = await topbar();
+    const refresh = async () => { const s = await api('/api/status'); $('#extBal').textContent = usd(s.agents.external.wallet.available) + ' available'; };
+    const credit = async (id) => { const r = await api(`/api/wallet/external/orders/${id}/capture`, { json: {} }); toast(`Funded ${usd(r.capture.amount)} via PayPal`); refresh(); };
+    const create = async () => (await api('/api/wallet/external/orders', { json: { amount: Number($('#amount').value) } })).id;
+    if (status?.paypal.clientId) {
+      const sc = document.createElement('script');
+      sc.src = `https://www.paypal.com/sdk/js?client-id=${encodeURIComponent(status.paypal.clientId)}&currency=USD&intent=capture`;
+      sc.onload = () => paypal.Buttons({ style: { layout: 'horizontal', height: 40, tagline: false }, createOrder: create, onApprove: (d) => credit(d.orderID), onError: (e) => toast(String(e)) }).render('#paypal-buttons');
+      document.head.appendChild(sc);
+    } else {
+      $('#paypal-buttons').innerHTML = '<button class="gold" id="mockPay" style="width:100%">Pay with PayPal (mock)</button>';
+      $('#mockPay').onclick = async () => credit(await create());
+    }
+    refresh();
+    document.querySelectorAll('.origin').forEach((e) => (e.textContent = location.origin));
+  </script>
+</body>
+</html>

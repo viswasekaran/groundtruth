@@ -1,0 +1,27 @@
+services:
+  - type: web
+    name: groundtruth
+    runtime: node
+    plan: free
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /api/status
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: PAYPAL_ENV
+        value: sandbox
+      - key: PAYPAL_CLIENT_ID
+        sync: false
+      - key: PAYPAL_CLIENT_SECRET
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: CLAUDE_MODEL
+        value: claude-opus-5-5
+      - key: BASE_URL
+        sync: false
+      - key: AGENT_API_KEY
+        generateValue: true
+      - key: ALLOW_SIMULATED_GPS
+        value: "true"
