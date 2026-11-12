@@ -72,7 +72,9 @@ A human was paid to take a photo at a specific place to answer an agent's task. 
 - Be strict: if the photo does not show the evidence the task asks for, answers_question is false.
 - Extract a concise, factual answer an agent can act on (e.g. "Open; ~8 of 20 tables occupied; short queue").
 - Flag photos of screens or prints, and images that look AI-generated or edited. Explain concrete visual cues.
-- The human's note is a claim, not evidence. Use it only if the photo supports it.`;
+- The human's note is a claim, not evidence. Use it only if the photo supports it.
+- Be fair to real photos: if the photo gives reasonable evidence for the question (e.g. sky and ground for "is it raining?"), answers_question is true, even if framing or angle is imperfect. Put remaining doubt in confidence.
+- Photos taken through a window, from a balcony, or with a window frame or wall in view are normal real photos, not screens.`;
 
 async function visionVerdict(bounty, imageBuffer, note) {
   if (aiMock) {
@@ -257,7 +259,8 @@ export async function verifySubmission({ bounty, imageBuffer, meta, note }) {
   else if (ai.error) add('ai', 'AI evidence check', 'warn', ai.error);
   else if (ai.suspected_screen_photo || ai.suspected_ai_generated)
     add('ai', 'AI evidence check', 'fail', `Suspected ${ai.suspected_screen_photo ? 'photo of a screen' : 'AI-generated image'}: ${ai.suspicious_reasons.join('; ')}`);
-  else if (!ai.answers_question) add('ai', 'AI evidence check', ai.confidence >= 0.7 ? 'fail' : 'warn', ai.reasoning);
+  // Not answering the question is not fraud: a human reviewer decides, so honest hunters are not auto-rejected.
+  else if (!ai.answers_question) add('ai', 'AI evidence check', 'warn', ai.reasoning);
   else if (ai.confidence < 0.6) add('ai', 'AI evidence check', 'warn', `Low confidence (${ai.confidence}). ${ai.reasoning}`);
   else add('ai', 'AI evidence check', 'pass', ai.reasoning);
 

@@ -44,7 +44,9 @@ async function call(method, path, body, { requestId } = {}) {
   const res = await fetch(`${BASE}${path}`, { method, headers, body: body ? JSON.stringify(body) : undefined });
   const json = await safeJson(res);
   if (!res.ok) {
-    const msg = json?.message || json?.name || 'PayPal API error';
+    let msg = json?.message || json?.name || 'PayPal API error';
+    if (/country that is not allowed/i.test(msg))
+      msg += ' Hint: the PayPal app belongs to a sandbox business account in a country without Payouts (e.g. India). Create a US sandbox business account, create the REST app under it, and use the client ID and secret of that app.';
     throw new PayPalError(`${method} ${path}: ${msg}`, res.status, json);
   }
   return json;
