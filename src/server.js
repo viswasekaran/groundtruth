@@ -19,7 +19,7 @@ import {
   PolicyError,
 } from './bounties.js';
 import { verifySubmission } from './verify.js';
-import { startMission, missionView, recoverMissions } from './agent.js';
+import { startMission, continueMission, missionView, recoverMissions } from './agent.js';
 import { haversineMeters } from './geo.js';
 
 const app = express();
@@ -246,6 +246,14 @@ app.post('/api/missions', (req, res) => {
   if (!goal) return res.status(400).json({ error: 'Goal is required' });
   const m = startMission({ goal, userLocation: req.body.userLocation });
   res.status(201).json(missionView(m));
+});
+app.post("/api/missions/:id/messages", (req, res) => {
+  const m = getMission(req.params.id);
+  if (!m) return res.status(404).json({ error: "Mission not found" });
+  const text = String(req.body.text || "").trim();
+  if (!text) return res.status(400).json({ error: "Message is required" });
+  continueMission(m, { text, userLocation: req.body.userLocation });
+  res.json(missionView(m));
 });
 app.get('/api/missions', (_req, res) => res.json(db.missions.slice().reverse().map(missionView)));
 app.get('/api/missions/:id', (req, res) => {

@@ -166,6 +166,25 @@ export function startMission({ goal, userLocation }) {
   return mission;
 }
 
+/** Follow-up message from the user in an existing conversation. */
+export function continueMission(mission, { text, userLocation }) {
+  text = String(text).slice(0, 2000);
+  if (userLocation && typeof userLocation.lat === "number") mission.userLocation = userLocation;
+  const loc = mission.userLocation
+    ? `The user is at lat ${mission.userLocation.lat.toFixed(5)}, lng ${mission.userLocation.lng.toFixed(5)}.`
+    : "The user location is unknown.";
+  const msg = { role: "user", content: `${text}
+
+(${loc} Current time: ${new Date().toISOString()})` };
+  log(mission, { kind: "user", text });
+  if (mission.running) mission.pending.push(msg);
+  else {
+    mission.messages.push(msg);
+    drive(mission).catch((e) => fail(mission, e));
+  }
+  return mission;
+}
+
 function fail(mission, e) {
   console.error('[agent]', e);
   mission.status = 'error';

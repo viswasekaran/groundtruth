@@ -15,6 +15,7 @@
           <h2 style="margin:0">Atlas, your concierge agent</h2>
           <span class="spacer"></span>
           <select id="missionPicker" style="width:auto;max-width:240px"></select>
+          <button type="button" class="small" id="newChat">New chat</button>
         </div>
         <p class="muted small" style="margin-top:0">Ask about anything that depends on the <b>current</b> state of a real place. Atlas decides when to pay a nearby human for live, verified evidence.</p>
 
@@ -78,7 +79,8 @@
     import { $, api, esc, usd, topbar, live, toast, getPosition, until } from '/js/common.js';
 
     const status = await topbar();
-    let current = null; // mission id
+    let current = null; // mission id; follow-ups go to this conversation
+    let startFresh = false; // "New chat" pressed: next message starts a new mission
     let missions = [];
 
     // ------------------------------------------------ examples
@@ -106,7 +108,10 @@
       $('#go').disabled = true;
       try {
         const userLocation = await resolveLocation();
-        const m = await api('/api/missions', { json: { goal, userLocation } });
+        const m = current
+          ? await api(`/api/missions/${current}/messages`, { json: { text: goal, userLocation } })
+          : await api('/api/missions', { json: { goal, userLocation } });
+        startFresh = false;
         $('#goal').value = '';
         current = m.id;
         await loadMissions();
@@ -116,13 +121,20 @@
 
     async function loadMissions() {
       missions = await api('/api/missions');
-      if (!current && missions[0]) current = missions[0].id;
+      if (!current && !startFresh && missions[0]) current = missions[0].id;
       $('#missionPicker').innerHTML = missions.length
-        ? missions.map((m) => `<option value="${m.id}" ${m.id === current ? 'selected' : ''}>${esc(m.goal.slice(0, 40))}… (${m.status})</option>`).join('')
+        ? (current ? '' : '<option value="" selected>New conversation</option>') + missions.map((m) => `<option value="${m.id}" ${m.id === current ? 'selected' : ''}>${esc(m.goal.slice(0, 40))}… (${m.status})</option>`).join('')
         : '<option>No missions</option>';
       renderChat();
     }
-    $('#missionPicker').onchange = (e) => { current = e.target.value; renderChat(); };
+    $('#missionPicker').onchange = (e) => { current = e.target.value; startFresh = false; renderChat(); };
+    $('#newChat').onclick = () => {
+      current = null;
+      startFresh = true;
+      $('#missionPicker').value = "";
+      $('#chat').innerHTML = '<div class="muted small">New conversation. Ask Atlas anything about a real place right now.</div>';
+      $('#goal').focus();
+    };
 
     // Tiny markdown for agent replies: escape first, then **bold**, `code`, and "- " bullet lists.
     function md(text) {
