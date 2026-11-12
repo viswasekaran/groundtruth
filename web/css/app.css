@@ -1,5 +1,11 @@
 /* GroundTruth design system: neutrals + one accent. Status colours only in badges and signal icons. */
-@import url('https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap');
+/* Bundled by Vite: fonts and Leaflet ship with the app, nothing loads from a CDN. */
+@import '@fontsource/geist-sans/400.css';
+@import '@fontsource/geist-sans/500.css';
+@import '@fontsource/geist-sans/600.css';
+@import '@fontsource/geist-mono/400.css';
+@import '@fontsource/geist-mono/500.css';
+@import 'leaflet/dist/leaflet.css';
 
 :root {
   /* tokens (mirror of the GroundTruth design system tokens.json) */
@@ -29,7 +35,7 @@
   --radius-sm: 6px;
   --radius-md: 10px;
   --radius-lg: 16px;
-  --sans: 'Geist', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --sans: 'Geist Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
   --mono: 'Geist Mono', ui-monospace, 'Cascadia Code', Consolas, monospace;
 
   /* legacy aliases used by inline styles */

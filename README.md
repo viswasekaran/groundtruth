@@ -61,10 +61,14 @@ Requirements: Node.js 20+.
 ```bash
 git clone <this repo> groundtruth
 cd groundtruth
-npm install
+npm install               # also builds the frontend into dist/ (vite build)
 cp .env.example .env      # optional: works with no keys in mock mode
 npm start                 # http://localhost:3000
 ```
+
+Editing the frontend with hot reload: run `npm run dev:api` (API on :3000) and `npm run dev` (Vite on :5173) side by side. After changing files in `web/`, `npm run build` updates what `npm start` serves.
+
+**Storage:** set `DATABASE_URL` to any Postgres URL (e.g. Prisma Postgres) to keep wallets, bounties, missions and photos across restarts. Without it, data lives in `data/db.json` and `data/uploads/`.
 
 ### Turn on real PayPal sandbox and Claude
 
@@ -112,7 +116,7 @@ src/bounties.js   wallet ledger, spending policy, bounty lifecycle, payouts, sta
 src/verify.js     trust signals: capture, GPS, freshness, dHash, Claude vision verdict
 src/agent.js      Claude agent loop (tools, pause/resume on bounty events)
 src/mcp.js        MCP server (stdio)
-public/           landing map, agent console, hunter app, trust report, developer page
+web/              landing map, agent console, hunter app, trust report, developer page (built by Vite into dist/)
 test/             unit tests (dHash, distance)
 docs/             build plan, demo script, Devpost text
 ```

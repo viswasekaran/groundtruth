@@ -2,8 +2,8 @@ import express from 'express';
 import multer from 'multer';
 import fs from 'node:fs';
 import path from 'node:path';
-import { config, paypalMock, aiMock, aiProvider, aiModel, aiName, ROOT, UPLOAD_DIR } from './config.js';
-import { db, bus, save, emit, id, resetDb, getBounty, getSubmission, getMission } from './store.js';
+import { config, paypalMock, aiMock, aiProvider, aiModel, aiName, ROOT } from './config.js';
+import { db, bus, save, emit, id, resetDb, getBounty, getSubmission, getMission, initStore, flushStore, putUpload, getUpload, storage } from './store.js';
 import * as paypal from './paypal.js';
 import {
   createBounty,
@@ -24,8 +24,20 @@ import { haversineMeters } from './geo.js';
 
 const app = express();
 app.use(express.json({ limit: '1mb' }));
-app.use(express.static(path.join(ROOT, 'public')));
-app.use('/uploads', express.static(UPLOAD_DIR, { maxAge: '1h' }));
+// Frontend: Vite build output (npm run build). Hashed assets are cached for a year; HTML is never cached.
+const DIST = path.join(ROOT, 'dist');
+if (!fs.existsSync(path.join(DIST, 'index.html'))) console.warn('[web] dist/ is missing: run "npm run build" to build the frontend.');
+app.use('/assets', express.static(path.join(DIST, 'assets'), { immutable: true, maxAge: '1y' }));
+app.use(express.static(DIST, { setHeaders: (res, p) => { if (p.endsWith('.html')) res.setHeader('Cache-Control', 'no-cache'); } }));
+
+// Submitted photos: from Postgres when DATABASE_URL is set, else from data/uploads.
+app.get('/uploads/:name', async (req, res, next) => {
+  try {
+    const f = await getUpload(path.basename(req.params.name));
+    if (!f) return res.status(404).end();
+    res.set({ 'Content-Type': f.mime, 'Cache-Control': 'public, max-age=3600' }).send(f.data);
+  } catch (e) { next(e); }
+});
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -45,6 +57,7 @@ app.get('/api/status', (_req, res) => {
     paypal: paypal.paypalInfo(),
     ai: { mode: aiMock ? 'mock' : 'live', provider: aiProvider, name: aiName, model: aiModel },
     allowSimulatedGps: config.verify.allowSimulatedGps,
+    storage,
     agents: Object.fromEntries([...AGENTS].map((a) => [a, { wallet: walletView(a), policy: policyView(a), name: db.agents[a].name }])),
     stats: {
       bountiesPosted: db.bounties.length,
@@ -140,7 +153,7 @@ app.post(
 
     const subId = id('sub');
     const file = `${subId}.jpg`;
-    fs.writeFileSync(path.join(UPLOAD_DIR, file), req.file.buffer);
+    await putUpload(file, req.file.buffer, req.file.mimetype);
 
     const sub = {
       id: subId,
@@ -320,6 +333,14 @@ app.use((err, _req, res, _next) => {
   res.status(err.status && err.status < 600 ? err.status : 500).json({ error: err.message || 'Server error' });
 });
 
+try {
+  await initStore();
+} catch (e) {
+  console.error(`
+[db] Could not connect to Postgres (DATABASE_URL): ${e.message}
+`);
+  process.exit(1);
+}
 recoverMissions();
 setInterval(expireBounties, 15_000);
 setInterval(pollPayouts, paypalMock ? 1500 : 5000);
@@ -327,5 +348,9 @@ setInterval(pollPayouts, paypalMock ? 1500 : 5000);
 app.listen(config.port, () => {
   console.log(`\nGroundTruth running at http://localhost:${config.port}`);
   console.log(`  PayPal: ${paypalMock ? 'MOCK (add PAYPAL_CLIENT_ID/SECRET to .env for sandbox)' : config.paypal.env}`);
+  console.log(`  Data:   ${storage === 'postgres' ? `Postgres (namespace "${config.dbNamespace}")` : 'data/db.json'}`);
   console.log(`  AI:     ${aiMock ? 'MOCK (add OPENROUTER_API_KEY, GEMINI_API_KEY or ANTHROPIC_API_KEY to .env)' : `${aiName} · ${aiModel}`}\n`);
 });
+
+// Render sends SIGTERM before a redeploy: write any pending change first.
+for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, () => flushStore().finally(() => process.exit(0)));

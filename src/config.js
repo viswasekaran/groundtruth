@@ -40,6 +40,11 @@ export const config = {
     model: process.env.OPENROUTER_MODEL || 'anthropic/claude-haiku-5.5',
   },
 
+  // Postgres for persistence (any postgres:// URL, e.g. Prisma Postgres). Without it, data/db.json is used.
+  databaseUrl: process.env.DATABASE_URL || '',
+  // Separate data per environment in the same database: 'live' on Render, 'local' on your machine.
+  dbNamespace: process.env.DB_NAMESPACE || (process.env.RENDER ? 'live' : 'local'),
+
   // Starting credit for each agent wallet on a fresh database (demo hosts with no persistent disk, e.g. Render free).
   demoWalletUsd: num(process.env.DEMO_WALLET_USD, 0),
 

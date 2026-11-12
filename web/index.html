@@ -4,8 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>GroundTruth — Agents ask. Humans verify. PayPal pays.</title>
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-  <link rel="stylesheet" href="/css/app.css" />
+  <link rel="stylesheet" href="./css/app.css" />
 </head>
 <body>
   <main class="wrap">
@@ -47,9 +46,8 @@
     </div>
   </main>
 
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script type="module">
-    import { $, api, esc, usd, topbar, live, describeEvent, leafletMap, hhmm, until } from '/js/common.js';
+    import { $, api, esc, usd, topbar, live, describeEvent, leafletMap, hhmm, until, L } from './js/common.js';
 
     await topbar();
     const map = leafletMap('map');

@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Agent console — GroundTruth</title>
-  <link rel="stylesheet" href="/css/app.css" />
+  <link rel="stylesheet" href="./css/app.css" />
 </head>
 <body>
   <main class="wrap">
@@ -14,7 +14,7 @@
         <div class="row">
           <h2 style="margin:0">Atlas, your concierge agent</h2>
           <span class="spacer"></span>
-          <select id="missionPicker" style="width:auto;max-width:240px"></select>
+          <select id="missionPicker" style="width:auto;min-width:180px;max-width:240px"></select>
           <button type="button" class="small" id="newChat">New chat</button>
         </div>
         <p class="muted small" style="margin-top:0">Ask about anything that depends on the <b>current</b> state of a real place. Atlas decides when to pay a nearby human for live, verified evidence.</p>
@@ -76,7 +76,7 @@
   </main>
 
   <script type="module">
-    import { $, api, esc, usd, topbar, live, toast, getPosition, until } from '/js/common.js';
+    import { $, api, esc, usd, topbar, live, toast, getPosition, until } from './js/common.js';
 
     const status = await topbar();
     let current = null; // mission id; follow-ups go to this conversation
@@ -178,7 +178,11 @@
         (m.status === 'running' ? '<div class="muted small"><span class="spinner"></span> Atlas is thinking…</div>' : '') +
         (m.status === 'waiting' ? '<div class="muted small">Waiting for a nearby human to capture live evidence…</div>' : '');
       chat.scrollTop = chat.scrollHeight;
+      // Safety net if a live update is missed: re-check a running mission every few seconds.
+      clearTimeout(pollTimer);
+      if (m.status === 'running') pollTimer = setTimeout(() => { renderChat(); loadMissions(); }, 4000);
     }
+    let pollTimer;
 
     // ------------------------------------------------ wallet, policy, reviews, bounties
     async function refreshSide() {
@@ -249,7 +253,8 @@
 
     // ------------------------------------------------ live updates
     live((ev) => {
-      if (ev.type === 'mission.log' || ev.type === 'mission.status') { if (ev.missionId === current) renderChat(); if (ev.type === 'mission.status') loadMissions(); }
+      if (ev.type === 'live.reconnected') { loadMissions(); refreshSide(); }
+      else if (ev.type === 'mission.log' || ev.type === 'mission.status') { if (ev.missionId === current) renderChat(); if (ev.type === 'mission.status') loadMissions(); }
       else if (ev.type !== 'mission.started') refreshSide();
     });
     loadMissions();

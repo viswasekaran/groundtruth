@@ -1,4 +1,6 @@
 // Shared helpers for all pages.
+import L from 'leaflet';
+export { L };
 export const $ = (sel, root = document) => root.querySelector(sel);
 export const esc = (s) =>
   String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -54,8 +56,16 @@ export async function topbar() {
     <div class="modes" id="modes"></div>
     <nav>${NAV.map(([h, l]) => `<a href="${h}" class="${h === here ? 'active' : ''}">${l}</a>`).join('')}</nav>`;
   document.body.prepend(bar);
+  // If the server is starting or restarting, wait for it instead of rendering with wrong defaults (e.g. "mock").
+  let s = null;
+  for (let i = 0; !s; i++) {
+    try { s = await api('/api/status'); }
+    catch {
+      if (i === 1) toast('Connecting to the server…');
+      await new Promise((r) => setTimeout(r, Math.min(1000 + i * 500, 4000)));
+    }
+  }
   try {
-    const s = await api('/api/status');
     $('#modes', bar).innerHTML =
       `<span class="pill ${s.paypal.mode === 'mock' ? 'mock' : 'live'}" title="PayPal mode">PayPal ${s.paypal.mode}</span>` +
       `<span class="pill ${s.ai.mode === 'mock' ? 'mock' : 'live'}" title="${esc(s.ai.model)}">${esc(s.ai.name || 'AI')} ${s.ai.mode}</span>`;
@@ -65,15 +75,21 @@ export async function topbar() {
   }
 }
 
-/** Subscribe to live server events (SSE). */
+/** Subscribe to live server events (SSE). Reconnects if the server restarts and then sends {type: 'live.reconnected'}. */
 export function live(onEvent) {
-  const es = new EventSource('/api/events');
-  es.onmessage = (m) => {
-    try {
-      onEvent(JSON.parse(m.data));
-    } catch {}
+  let es, dropped = false;
+  const connect = () => {
+    es = new EventSource('/api/events');
+    es.onopen = () => { if (dropped) { dropped = false; onEvent({ type: 'live.reconnected' }); } };
+    es.onmessage = (m) => {
+      try { onEvent(JSON.parse(m.data)); } catch {}
+    };
+    es.onerror = () => {
+      dropped = true;
+      if (es.readyState === EventSource.CLOSED) setTimeout(connect, 2000); // browser gave up: retry ourselves
+    };
   };
-  return es;
+  connect();
 }
 
 export function describeEvent(ev) {

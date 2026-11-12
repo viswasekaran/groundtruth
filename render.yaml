@@ -31,6 +31,8 @@ services:
         sync: false
       - key: AGENT_API_KEY
         generateValue: true
+      - key: DATABASE_URL
+        sync: false
       - key: DEMO_WALLET_USD
         value: "20"
       - key: ALLOW_SIMULATED_GPS

@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>For agents — GroundTruth</title>
-  <link rel="stylesheet" href="/css/app.css" />
+  <link rel="stylesheet" href="./css/app.css" />
   <style>pre { background:#18181B; color:#E4E4E7; border:0; border-radius:10px; padding:.9rem; overflow:auto; }</style>
 </head>
 <body>
@@ -81,7 +81,7 @@ curl <span class="origin"></span>/api/v1/wallet -H "x-api-key: $GROUNDTRUTH_API_
     </div>
   </main>
   <script type="module">
-    import { $, api, usd, toast, topbar } from '/js/common.js';
+    import { $, api, usd, toast, topbar } from './js/common.js';
     const status = await topbar();
     const refresh = async () => { const s = await api('/api/status'); $('#extBal').textContent = usd(s.agents.external.wallet.available) + ' available'; };
     const credit = async (id) => { const r = await api(`/api/wallet/external/orders/${id}/capture`, { json: {} }); toast(`Funded ${usd(r.capture.amount)} via PayPal`); refresh(); };

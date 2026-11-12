@@ -4,8 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Trust report — GroundTruth</title>
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-  <link rel="stylesheet" href="/css/app.css" />
+  <link rel="stylesheet" href="./css/app.css" />
 </head>
 <body>
   <main class="wrap">
@@ -18,9 +17,8 @@
       </aside>
     </div>
   </main>
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script type="module">
-    import { $, api, esc, usd, topbar, live, hhmm, until, toast } from '/js/common.js';
+    import { $, api, esc, usd, topbar, live, hhmm, until, toast, L } from './js/common.js';
     await topbar();
     const bid = new URLSearchParams(location.search).get('id');
     let map, layer;
