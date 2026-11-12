@@ -3,24 +3,28 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { EventEmitter } from 'node:events';
-import { DATA_DIR, UPLOAD_DIR } from './config.js';
+import { DATA_DIR, UPLOAD_DIR, config } from './config.js';
 
 const DB_FILE = path.join(DATA_DIR, 'db.json');
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+
+// A fresh wallet, pre-funded with DEMO_WALLET_USD when set (recorded as a demo credit, not a PayPal payment).
+const wallet = () => ({ balance: config.demoWalletUsd, reserved: 0, currency: 'USD' });
+const credits = () => (config.demoWalletUsd > 0 ? [{ at: new Date().toISOString(), amount: config.demoWalletUsd, source: 'demo-credit' }] : []);
 
 const empty = () => ({
   agents: {
     atlas: {
       id: 'atlas',
       name: 'Atlas — travel & local concierge agent',
-      wallet: { balance: 0, reserved: 0, currency: 'USD' },
-      fundings: [],
+      wallet: wallet(),
+      fundings: credits(),
     },
     external: {
       id: 'external',
       name: 'External agents (REST / MCP)',
-      wallet: { balance: 0, reserved: 0, currency: 'USD' },
-      fundings: [],
+      wallet: wallet(),
+      fundings: credits(),
     },
   },
   bounties: [],

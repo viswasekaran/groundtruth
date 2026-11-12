@@ -40,6 +40,9 @@ export const config = {
     model: process.env.OPENROUTER_MODEL || 'anthropic/claude-haiku-5.5',
   },
 
+  // Starting credit for each agent wallet on a fresh database (demo hosts with no persistent disk, e.g. Render free).
+  demoWalletUsd: num(process.env.DEMO_WALLET_USD, 0),
+
   policy: {
     maxBountyUsd: num(process.env.MAX_BOUNTY_USD, 10),
     dailyCapUsd: num(process.env.DAILY_CAP_USD, 50),

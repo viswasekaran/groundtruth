@@ -124,10 +124,25 @@
     }
     $('#missionPicker').onchange = (e) => { current = e.target.value; renderChat(); };
 
+    // Tiny markdown for agent replies: escape first, then **bold**, `code`, and "- " bullet lists.
+    function md(text) {
+      const inline = (s) => esc(s).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/`([^`]+)`/g, "<code>$1</code>");
+      const out = [];
+      let list = null;
+      for (const line of String(text).split("\n")) {
+        const m = line.match(/^\s*(?:[-*•]|\d+\.)\s+(.*)$/);
+        if (m) { (list ||= []).push("<li>" + inline(m[1]) + "</li>"); continue; }
+        if (list) { out.push("<ul>" + list.join("") + "</ul>"); list = null; }
+        out.push(line.trim() ? "<p>" + inline(line) + "</p>" : "");
+      }
+      if (list) out.push("<ul>" + list.join("") + "</ul>");
+      return out.filter(Boolean).join("");
+    }
+
     function entryHtml(en) {
       switch (en.kind) {
         case 'user': return `<div class="msg user">${esc(en.text)}</div>`;
-        case 'agent': return `<div class="msg agent">${esc(en.text)}</div>`;
+        case 'agent': return `<div class="msg agent md">${md(en.text)}</div>`;
         case 'thought': return `<div class="msg thought">${esc(en.text)}</div>`;
         case 'tool': return `<div class="msg tool">→ <b>${esc(en.tool)}</b> ${esc(JSON.stringify(en.input))}</div>`;
         case 'tool_result': {
