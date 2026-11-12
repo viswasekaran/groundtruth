@@ -19,9 +19,11 @@
         <input id="email" type="email" placeholder="you@example.com" autocomplete="email" />
         <div class="row" style="margin-top:.6rem">
           <span id="gpsState" class="small muted">Locating…</span>
+          <button type="button" id="gpsRetry" class="small hidden">Allow location</button>
           <span class="spacer"></span>
           <label class="small row hidden" id="simWrap" style="margin:0;gap:.3rem;cursor:pointer"><input type="checkbox" id="sim" style="width:auto" /> Demo: simulate GPS</label>
         </div>
+        <div id="gpsHelp" class="notice warn small hidden" style="margin-top:.75rem"></div>
       </div>
       <div id="bounties"><div class="muted small">Loading tasks…</div></div>
     </section>
@@ -74,20 +76,59 @@
     if (status?.allowSimulatedGps) $('#simWrap').classList.remove('hidden');
     $('#sim').onchange = loadBounties;
 
-    function startGps() {
+    // How to re-enable location once the browser has remembered a "Block".
+    function unblockHelp() {
+      const ua = navigator.userAgent;
+      const how = /iPhone|iPad/.test(ua)
+        ? 'On iPhone: tap <b>aA</b> in the address bar, then <b>Website Settings</b> → <b>Location</b> → <b>Allow</b>. Also check Settings → Privacy → Location Services → Safari is on.'
+        : /Android/.test(ua)
+          ? 'On Android: tap the icon left of the address, then <b>Permissions</b> → <b>Location</b> → <b>Allow</b>. Also make sure phone Location is turned on.'
+          : 'Click the icon left of the address, set <b>Location</b> to <b>Allow</b>.';
+      return `Your browser has blocked location for this site, so it won’t ask again by itself. ${how} Then reload this page.`;
+    }
+
+    async function permissionState() {
+      try { return (await navigator.permissions.query({ name: 'geolocation' })).state; } catch { return 'unknown'; }
+    }
+
+    function stopGps() { if (watchId !== null) { navigator.geolocation.clearWatch(watchId); watchId = null; } }
+
+    function startGps(fromButton = false) {
       if (!navigator.geolocation) { $('#gpsState').textContent = 'No GPS on this device.'; return; }
+      stopGps();
+      $('#gpsState').textContent = 'Locating…';
+      $('#gpsRetry').classList.add('hidden');
+      $('#gpsHelp').classList.add('hidden');
       watchId = navigator.geolocation.watchPosition(
         (p) => {
           pos = { lat: p.coords.latitude, lng: p.coords.longitude, accuracy: p.coords.accuracy };
           $('#gpsState').innerHTML = `GPS ±${Math.round(pos.accuracy)} m`;
           $('#hudGps').textContent = `GPS ±${Math.round(pos.accuracy)} m`;
+          $('#gpsRetry').classList.add('hidden');
+          $('#gpsHelp').classList.add('hidden');
+          if (!loaded || fromButton) { fromButton = false; loadBounties(); }
+        },
+        async (e) => {
+          if (pos && e.code !== 1) return; // brief signal loss: keep the last fix
+          stopGps();
+          const denied = e.code === 1;
+          $('#gpsState').innerHTML = `<span style="color:var(--warning)">${denied ? 'Location is off' : 'Couldn’t get your location'}</span>`;
+          $('#gpsRetry').textContent = denied ? 'Allow location' : 'Try again';
+          $('#gpsRetry').classList.remove('hidden');
+          // Browsers re-prompt only if the user dismissed the prompt; after "Block" they refuse silently.
+          if (denied && (fromButton || (await permissionState()) === 'denied')) {
+            $('#gpsHelp').innerHTML = unblockHelp();
+            $('#gpsHelp').classList.remove('hidden');
+          }
           if (!loaded) loadBounties();
         },
-        (e) => { $('#gpsState').innerHTML = `<span style="color:var(--amber)">Location blocked: ${esc(e.message)}</span>`; if (!loaded) loadBounties(); },
         { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 },
       );
     }
+    $('#gpsRetry').onclick = () => startGps(true);
     startGps();
+    // If the user fixes it in site settings without reloading, pick it up.
+    navigator.permissions?.query({ name: 'geolocation' }).then((p) => { p.onchange = () => { if (p.state !== 'denied') startGps(true); }; }).catch(() => {});
 
     // ------------------------------------------------ list
     let loaded = false;
