@@ -71,7 +71,7 @@ npm start                 # http://localhost:3000
 1. Go to <https://developer.paypal.com/dashboard/applications/sandbox> and open (or create) a sandbox app. Copy its **Client ID** and **Secret** into `.env` as `PAYPAL_CLIENT_ID` and `PAYPAL_CLIENT_SECRET`.
    - In the app settings, make sure **Payouts** is enabled. The sandbox business account behind the app needs a balance; sandbox accounts come pre-funded.
    - Under **Sandbox accounts**, note a **personal** account. Use its email/password to pay in Checkout, and use another personal account's email as the hunter's PayPal email to receive payouts.
-2. Add an AI key to `.env`: either `ANTHROPIC_API_KEY` (Claude) or a free Google AI Studio key as `GEMINI_API_KEY` (Gemini, model set by `GEMINI_MODEL`). The agent and the photo check use whichever is set; Claude wins if both are.
+2. Add an AI key to `.env`: `ANTHROPIC_API_KEY` (Claude), `OPENROUTER_API_KEY` (any OpenRouter model, default `anthropic/claude-haiku-5.5`, set by `OPENROUTER_MODEL`), or a free Google AI Studio key as `GEMINI_API_KEY`. The agent and the photo check use the first one set, in that order.
 3. Restart with `npm start`. The pills in the top bar switch from `mock` to `sandbox` / `live`.
 
 ### Try the full flow
@@ -101,7 +101,7 @@ Fund the external-agent wallet first on `/developers.html`.
 
 ## Deploy (Render)
 
-`render.yaml` is included. Create a new **Blueprint** on Render from this repo, fill in the secret env vars (`PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, `ANTHROPIC_API_KEY` or `GEMINI_API_KEY`, and `BASE_URL` set to your Render URL), and deploy. HTTPS on Render makes the live camera work on phones.
+`render.yaml` is included. Create a new **Blueprint** on Render from this repo, fill in the secret env vars (`PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, `OPENROUTER_API_KEY` (or `ANTHROPIC_API_KEY` / `GEMINI_API_KEY`), and `BASE_URL` set to your Render URL), and deploy. HTTPS on Render makes the live camera work on phones.
 
 ## Project layout
 

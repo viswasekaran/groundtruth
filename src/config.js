@@ -35,6 +35,11 @@ export const config = {
       .split(',').map((s) => s.trim()).filter(Boolean),
   },
 
+  openrouter: {
+    apiKey: process.env.OPENROUTER_API_KEY || process.env.OPEN_ROUTER_API_KEY || '',
+    model: process.env.OPENROUTER_MODEL || 'anthropic/claude-haiku-5.5',
+  },
+
   policy: {
     maxBountyUsd: num(process.env.MAX_BOUNTY_USD, 10),
     dailyCapUsd: num(process.env.DAILY_CAP_USD, 50),
@@ -49,15 +54,17 @@ export const config = {
 };
 
 export const paypalMock = !(config.paypal.clientId && config.paypal.clientSecret);
-// AI provider: Claude if its key is set, else Gemini, else mock. AI_PROVIDER=claude|gemini|mock forces one.
+// AI provider, first key found wins: Claude (Anthropic API), then OpenRouter, then Gemini, else mock.
+// AI_PROVIDER=claude|openrouter|gemini|mock forces one (if its key is set).
 const forced = (process.env.AI_PROVIDER || '').toLowerCase();
+const has = { claude: !!config.anthropic.apiKey, openrouter: !!config.openrouter.apiKey, gemini: !!config.gemini.apiKey };
 export const aiProvider =
   forced === 'mock' ? 'mock'
-  : forced === 'gemini' && config.gemini.apiKey ? 'gemini'
-  : forced === 'claude' && config.anthropic.apiKey ? 'claude'
-  : config.anthropic.apiKey ? 'claude'
-  : config.gemini.apiKey ? 'gemini'
-  : 'mock';
+  : has[forced] ? forced
+  : ['claude', 'openrouter', 'gemini'].find((p) => has[p]) || 'mock';
 export const aiMock = aiProvider === 'mock';
-export const aiModel = aiProvider === 'gemini' ? config.gemini.model : aiProvider === 'claude' ? config.anthropic.model : 'mock';
-export const aiName = aiProvider === 'gemini' ? 'Gemini' : aiProvider === 'claude' ? 'Claude' : 'AI';
+export const aiModel =
+  { claude: config.anthropic.model, openrouter: config.openrouter.model, gemini: config.gemini.model }[aiProvider] || 'mock';
+// Label for the UI, e.g. "anthropic/claude-haiku-5.5" -> "Claude Haiku 5.5".
+const pretty = (id) => id.split('/').pop().replace(/:.*$/, '').split('-').map((w) => w[0].toUpperCase() + w.slice(1)).join(' ');
+export const aiName = aiProvider === 'gemini' ? 'Gemini' : aiProvider === 'claude' ? 'Claude' : aiProvider === 'openrouter' ? pretty(aiModel) : 'AI';

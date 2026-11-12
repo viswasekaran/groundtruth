@@ -3,6 +3,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { config, aiMock, aiProvider } from './config.js';
 import { generate as geminiGenerate, toGeminiTools } from './gemini.js';
+import { chat as openrouterChat, toOpenAITools } from './openrouter.js';
 import { db, save, emit, id, getMission, getBounty } from './store.js';
 import { geocode, haversineMeters } from './geo.js';
 import { createBounty, walletView, policyView, PolicyError, onBountyResolved, publicBounty } from './bounties.js';
@@ -180,6 +181,7 @@ async function drive(mission) {
   try {
     if (aiMock) await mockTurn(mission);
     else if (aiProvider === 'gemini') await geminiLoop(mission);
+    else if (aiProvider === 'openrouter') await openrouterLoop(mission);
     else await claudeLoop(mission);
   } finally {
     mission.running = false;
@@ -243,6 +245,58 @@ async function claudeLoop(mission) {
       }
     }
     mission.messages.push({ role: 'user', content: results });
+    save();
+  }
+  log(mission, { kind: 'error', text: 'Stopped after 12 steps.' });
+}
+
+// OpenRouter (OpenAI-compatible) version of the same loop, with its own history (ocontents).
+const OPENAI_TOOLS = toOpenAITools(TOOLS);
+
+async function openrouterLoop(mission) {
+  mission.ocontents ||= [{ role: 'system', content: SYSTEM }];
+  mission.oSynced ||= 0;
+  for (; mission.oSynced < mission.messages.length; mission.oSynced++) {
+    const m = mission.messages[mission.oSynced];
+    if (m.role === 'user' && typeof m.content === 'string') mission.ocontents.push({ role: 'user', content: m.content });
+  }
+  for (let i = 0; i < 12; i++) {
+    const choice = await openrouterChat({ messages: mission.ocontents, tools: OPENAI_TOOLS, max_tokens: 4000 });
+    const msg = choice.message || { role: 'assistant', content: '' };
+    const calls = msg.tool_calls || [];
+    mission.ocontents.push({ role: 'assistant', content: msg.content || '', ...(calls.length ? { tool_calls: calls } : {}) });
+    if (msg.reasoning?.trim()) log(mission, { kind: 'thought', text: msg.reasoning.trim() });
+    if (typeof msg.content === 'string' && msg.content.trim()) log(mission, { kind: 'agent', text: msg.content.trim() });
+    save();
+
+    if (!calls.length) {
+      if (choice.finish_reason && !['stop', 'length', 'tool_calls'].includes(choice.finish_reason))
+        log(mission, { kind: 'error', text: `The model stopped early (${choice.finish_reason}).` });
+      return;
+    }
+    for (const call of calls) {
+      const name = call.function?.name;
+      let input = {};
+      let content;
+      try {
+        input = call.function?.arguments ? JSON.parse(call.function.arguments) : {};
+      } catch {
+        content = 'Error: tool arguments were not valid JSON. Call the tool again with valid JSON.';
+      }
+      if (content === undefined) {
+        log(mission, { kind: 'tool', tool: name, input });
+        try {
+          const out = await runTool(mission, name, input);
+          log(mission, { kind: 'tool_result', tool: name, output: out });
+          content = JSON.stringify(out);
+        } catch (e) {
+          const blocked = e instanceof PolicyError;
+          log(mission, { kind: blocked ? 'policy_block' : 'tool_error', tool: name, text: e.message });
+          content = blocked ? `BLOCKED BY SPENDING POLICY (${e.rule}): ${e.message}` : `Error: ${e.message}`;
+        }
+      }
+      mission.ocontents.push({ role: 'tool', tool_call_id: call.id, content });
+    }
     save();
   }
   log(mission, { kind: 'error', text: 'Stopped after 12 steps.' });
@@ -363,7 +417,7 @@ onBountyResolved((bounty, submission) => {
 });
 
 export function missionView(m) {
-  const { messages, pending, gcontents, gSynced, ...rest } = m;
+  const { messages, pending, gcontents, gSynced, ocontents, oSynced, ...rest } = m;
   return rest;
 }
 

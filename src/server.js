@@ -319,5 +319,5 @@ setInterval(pollPayouts, paypalMock ? 1500 : 5000);
 app.listen(config.port, () => {
   console.log(`\nGroundTruth running at http://localhost:${config.port}`);
   console.log(`  PayPal: ${paypalMock ? 'MOCK (add PAYPAL_CLIENT_ID/SECRET to .env for sandbox)' : config.paypal.env}`);
-  console.log(`  AI:     ${aiMock ? 'MOCK (add GEMINI_API_KEY or ANTHROPIC_API_KEY to .env)' : `${aiName} · ${aiModel}`}\n`);
+  console.log(`  AI:     ${aiMock ? 'MOCK (add OPENROUTER_API_KEY, GEMINI_API_KEY or ANTHROPIC_API_KEY to .env)' : `${aiName} · ${aiModel}`}\n`);
 });

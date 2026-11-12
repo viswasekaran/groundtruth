@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
 import { config, aiMock, aiProvider, aiModel } from './config.js';
 import { generate as geminiGenerate } from './gemini.js';
+import { chat as openrouterChat } from './openrouter.js';
 import { db } from './store.js';
 import { haversineMeters } from './geo.js';
 
@@ -84,7 +85,7 @@ async function visionVerdict(bounty, imageBuffer, note) {
       suspected_screen_photo: false,
       suspected_ai_generated: false,
       suspicious_reasons: [],
-      reasoning: 'Mock mode: add GEMINI_API_KEY or ANTHROPIC_API_KEY to enable AI vision verification.',
+      reasoning: 'Mock mode: add OPENROUTER_API_KEY, GEMINI_API_KEY or ANTHROPIC_API_KEY to enable AI vision verification.',
     };
   }
   const taskText =
@@ -93,6 +94,7 @@ async function visionVerdict(bounty, imageBuffer, note) {
     `PLACE: ${bounty.placeName || `${bounty.lat}, ${bounty.lng}`}\n` +
     `HUMAN'S NOTE (unverified claim): ${note?.trim() || '(none)'}`;
   if (aiProvider === 'gemini') return geminiVerdict(imageBuffer, taskText);
+  if (aiProvider === 'openrouter') return openrouterVerdict(imageBuffer, taskText);
   const response = await client.messages.parse({
     model: config.anthropic.model,
     max_tokens: 4000,
@@ -142,6 +144,33 @@ const unavailable = (error) => ({
   suspicious_reasons: [],
   reasoning: 'Automatic check unavailable; sending to human review.',
 });
+
+async function openrouterVerdict(imageBuffer, taskText) {
+  const { $schema, ...schema } = z.toJSONSchema(Verdict);
+  const choice = await openrouterChat({
+    max_tokens: 2000,
+    messages: [
+      { role: 'system', content: VERIFIER_SYSTEM },
+      {
+        role: 'user',
+        content: [
+          { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${imageBuffer.toString('base64')}` } },
+          { type: 'text', text: taskText },
+        ],
+      },
+    ],
+    response_format: { type: 'json_schema', json_schema: { name: 'verdict', strict: true, schema: { ...schema, additionalProperties: false } } },
+  });
+  let parsed;
+  try {
+    const text = String(choice.message?.content || '').replace(/^```(?:json)?\s*|\s*```$/g, '');
+    parsed = Verdict.safeParse(JSON.parse(text));
+  } catch {
+    parsed = { success: false };
+  }
+  if (!parsed.success) return unavailable(choice.finish_reason === 'content_filter' ? 'Model declined to judge this image.' : 'Could not parse model verdict.');
+  return { ...parsed.data, model: choice.model };
+}
 
 async function geminiVerdict(imageBuffer, taskText) {
   const { $schema, ...schema } = z.toJSONSchema(Verdict);
