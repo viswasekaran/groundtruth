@@ -3,11 +3,12 @@ import jpeg from 'jpeg-js';
 import Anthropic from '@anthropic-ai/sdk';
 import { z } from 'zod';
 import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
-import { config, aiMock } from './config.js';
+import { config, aiMock, aiProvider, aiModel } from './config.js';
+import { generate as geminiGenerate } from './gemini.js';
 import { db } from './store.js';
 import { haversineMeters } from './geo.js';
 
-const client = aiMock ? null : new Anthropic({ apiKey: config.anthropic.apiKey });
+const client = aiProvider === 'claude' ? new Anthropic({ apiKey: config.anthropic.apiKey }) : null;
 
 // ---------------------------------------------------------------- perceptual hash (dHash)
 
@@ -77,15 +78,21 @@ async function visionVerdict(bounty, imageBuffer, note) {
     return {
       mock: true,
       answers_question: true,
-      answer: note?.trim() || 'Photo received (AI check skipped: no ANTHROPIC_API_KEY set).',
+      answer: note?.trim() || 'Photo received (AI check skipped: no AI key set).',
       confidence: 0.75,
       scene_description: 'AI vision check skipped in mock mode.',
       suspected_screen_photo: false,
       suspected_ai_generated: false,
       suspicious_reasons: [],
-      reasoning: 'Mock mode: add ANTHROPIC_API_KEY to enable Claude vision verification.',
+      reasoning: 'Mock mode: add GEMINI_API_KEY or ANTHROPIC_API_KEY to enable AI vision verification.',
     };
   }
+  const taskText =
+    `TASK: ${bounty.question}\n` +
+    (bounty.answerHint ? `EXPECTED ANSWER FORMAT: ${bounty.answerHint}\n` : '') +
+    `PLACE: ${bounty.placeName || `${bounty.lat}, ${bounty.lng}`}\n` +
+    `HUMAN'S NOTE (unverified claim): ${note?.trim() || '(none)'}`;
+  if (aiProvider === 'gemini') return geminiVerdict(imageBuffer, taskText);
   const response = await client.messages.parse({
     model: config.anthropic.model,
     max_tokens: 4000,
@@ -122,6 +129,36 @@ async function visionVerdict(bounty, imageBuffer, note) {
     };
   }
   return { ...response.parsed_output, model: config.anthropic.model };
+}
+
+const unavailable = (error) => ({
+  error,
+  answers_question: false,
+  answer: '',
+  confidence: 0,
+  scene_description: '',
+  suspected_screen_photo: false,
+  suspected_ai_generated: false,
+  suspicious_reasons: [],
+  reasoning: 'Automatic check unavailable; sending to human review.',
+});
+
+async function geminiVerdict(imageBuffer, taskText) {
+  const { $schema, ...schema } = z.toJSONSchema(Verdict);
+  const cand = await geminiGenerate({
+    systemInstruction: { parts: [{ text: VERIFIER_SYSTEM }] },
+    contents: [{ role: 'user', parts: [{ inlineData: { mimeType: 'image/jpeg', data: imageBuffer.toString('base64') } }, { text: taskText }] }],
+    generationConfig: { responseMimeType: 'application/json', responseJsonSchema: schema },
+  });
+  const text = (cand.content?.parts || []).filter((p) => p.text && !p.thought).map((p) => p.text).join('');
+  let parsed;
+  try {
+    parsed = Verdict.safeParse(JSON.parse(text));
+  } catch {
+    parsed = { success: false };
+  }
+  if (!parsed.success) return unavailable(cand.finishReason === 'SAFETY' ? 'Model declined to judge this image.' : 'Could not parse model verdict.');
+  return { ...parsed.data, model: cand.modelUsed || aiModel };
 }
 
 // ---------------------------------------------------------------- the pipeline
@@ -187,7 +224,7 @@ export async function verifySubmission({ bounty, imageBuffer, meta, note }) {
   } catch (e) {
     ai = { error: e.message, answers_question: false, confidence: 0, suspicious_reasons: [], reasoning: 'AI check failed; sending to human review.' };
   }
-  if (ai.mock) add('ai', 'AI evidence check', 'warn', 'Skipped (mock mode: no ANTHROPIC_API_KEY).');
+  if (ai.mock) add('ai', 'AI evidence check', 'warn', 'Skipped (mock mode: no AI key set).');
   else if (ai.error) add('ai', 'AI evidence check', 'warn', ai.error);
   else if (ai.suspected_screen_photo || ai.suspected_ai_generated)
     add('ai', 'AI evidence check', 'fail', `Suspected ${ai.suspected_screen_photo ? 'photo of a screen' : 'AI-generated image'}: ${ai.suspicious_reasons.join('; ')}`);

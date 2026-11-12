@@ -1,12 +1,13 @@
 // "Atlas" — a Claude-powered concierge agent that hires humans for real-world ground truth.
 // Manual tool loop so the conversation can pause while a bounty is open and resume when it resolves.
 import Anthropic from '@anthropic-ai/sdk';
-import { config, aiMock } from './config.js';
+import { config, aiMock, aiProvider } from './config.js';
+import { generate as geminiGenerate, toGeminiTools } from './gemini.js';
 import { db, save, emit, id, getMission, getBounty } from './store.js';
 import { geocode, haversineMeters } from './geo.js';
 import { createBounty, walletView, policyView, PolicyError, onBountyResolved, publicBounty } from './bounties.js';
 
-const client = aiMock ? null : new Anthropic({ apiKey: config.anthropic.apiKey });
+const client = aiProvider === 'claude' ? new Anthropic({ apiKey: config.anthropic.apiKey }) : null;
 const AGENT_ID = 'atlas';
 
 const SYSTEM = `You are Atlas, a local concierge AI agent. You help a user make real-world decisions (where to eat, whether a place is open or crowded, whether an item is in stock, whether a street is passable).
@@ -178,6 +179,7 @@ async function drive(mission) {
   save();
   try {
     if (aiMock) await mockTurn(mission);
+    else if (aiProvider === 'gemini') await geminiLoop(mission);
     else await claudeLoop(mission);
   } finally {
     mission.running = false;
@@ -246,6 +248,62 @@ async function claudeLoop(mission) {
   log(mission, { kind: 'error', text: 'Stopped after 12 steps.' });
 }
 
+// Gemini version of the same loop. Its own history (gcontents) keeps model turns verbatim,
+// including thought signatures; plain user/event messages are copied over from mission.messages.
+const GEMINI_TOOLS = toGeminiTools(TOOLS);
+
+async function geminiLoop(mission) {
+  mission.gcontents ||= [];
+  mission.gSynced ||= 0;
+  for (; mission.gSynced < mission.messages.length; mission.gSynced++) {
+    const m = mission.messages[mission.gSynced];
+    if (m.role === 'user' && typeof m.content === 'string') mission.gcontents.push({ role: 'user', parts: [{ text: m.content }] });
+  }
+  for (let i = 0; i < 12; i++) {
+    const cand = await geminiGenerate({
+      systemInstruction: { parts: [{ text: SYSTEM }] },
+      contents: mission.gcontents,
+      tools: GEMINI_TOOLS,
+      generationConfig: { thinkingConfig: { includeThoughts: true } },
+    });
+    const content = cand.content || { role: 'model', parts: [] };
+    content.role = 'model';
+    mission.gcontents.push(content);
+    const parts = content.parts || [];
+    for (const p of parts) {
+      if (p.thought && p.text) log(mission, { kind: 'thought', text: p.text });
+      else if (p.text?.trim()) log(mission, { kind: 'agent', text: p.text });
+    }
+    save();
+
+    const calls = parts.filter((p) => p.functionCall);
+    if (!calls.length) {
+      if (cand.finishReason && !['STOP', 'MAX_TOKENS'].includes(cand.finishReason))
+        log(mission, { kind: 'error', text: `The model stopped early (${cand.finishReason}).` });
+      return;
+    }
+    const responses = [];
+    for (const { functionCall: fc } of calls) {
+      const input = fc.args || {};
+      log(mission, { kind: 'tool', tool: fc.name, input });
+      let response;
+      try {
+        const out = await runTool(mission, fc.name, input);
+        log(mission, { kind: 'tool_result', tool: fc.name, output: out });
+        response = { result: out };
+      } catch (e) {
+        const blocked = e instanceof PolicyError;
+        log(mission, { kind: blocked ? 'policy_block' : 'tool_error', tool: fc.name, text: e.message });
+        response = { error: blocked ? `BLOCKED BY SPENDING POLICY (${e.rule}): ${e.message}` : e.message };
+      }
+      responses.push({ functionResponse: { ...(fc.id ? { id: fc.id } : {}), name: fc.name, response } });
+    }
+    mission.gcontents.push({ role: 'user', parts: responses });
+    save();
+  }
+  log(mission, { kind: 'error', text: 'Stopped after 12 steps.' });
+}
+
 // Deterministic stand-in so the app is fully demoable without an Anthropic key.
 async function mockTurn(mission) {
   const last = mission.messages[mission.messages.length - 1];
@@ -305,7 +363,7 @@ onBountyResolved((bounty, submission) => {
 });
 
 export function missionView(m) {
-  const { messages, pending, ...rest } = m;
+  const { messages, pending, gcontents, gSynced, ...rest } = m;
   return rest;
 }
 

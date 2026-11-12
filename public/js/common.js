@@ -58,7 +58,7 @@ export async function topbar() {
     const s = await api('/api/status');
     $('#modes', bar).innerHTML =
       `<span class="pill ${s.paypal.mode === 'mock' ? 'mock' : 'live'}" title="PayPal mode">PayPal ${s.paypal.mode}</span>` +
-      `<span class="pill ${s.ai.mode === 'mock' ? 'mock' : 'live'}" title="${esc(s.ai.model)}">Claude ${s.ai.mode}</span>`;
+      `<span class="pill ${s.ai.mode === 'mock' ? 'mock' : 'live'}" title="${esc(s.ai.model)}">${esc(s.ai.name || 'AI')} ${s.ai.mode}</span>`;
     return s;
   } catch {
     return null;

@@ -27,6 +27,14 @@ export const config = {
     model: process.env.CLAUDE_MODEL || 'claude-opus-5-5',
   },
 
+  gemini: {
+    apiKey: process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '',
+    model: process.env.GEMINI_MODEL || 'gemini-3.8-flash',
+    // Tried in order when the main model is overloaded or rate limited.
+    fallbackModels: (process.env.GEMINI_FALLBACK_MODELS || 'gemini-3.7-flash,gemini-3.5-flash,gemini-2.5-flash')
+      .split(',').map((s) => s.trim()).filter(Boolean),
+  },
+
   policy: {
     maxBountyUsd: num(process.env.MAX_BOUNTY_USD, 10),
     dailyCapUsd: num(process.env.DAILY_CAP_USD, 50),
@@ -41,4 +49,15 @@ export const config = {
 };
 
 export const paypalMock = !(config.paypal.clientId && config.paypal.clientSecret);
-export const aiMock = !config.anthropic.apiKey;
+// AI provider: Claude if its key is set, else Gemini, else mock. AI_PROVIDER=claude|gemini|mock forces one.
+const forced = (process.env.AI_PROVIDER || '').toLowerCase();
+export const aiProvider =
+  forced === 'mock' ? 'mock'
+  : forced === 'gemini' && config.gemini.apiKey ? 'gemini'
+  : forced === 'claude' && config.anthropic.apiKey ? 'claude'
+  : config.anthropic.apiKey ? 'claude'
+  : config.gemini.apiKey ? 'gemini'
+  : 'mock';
+export const aiMock = aiProvider === 'mock';
+export const aiModel = aiProvider === 'gemini' ? config.gemini.model : aiProvider === 'claude' ? config.anthropic.model : 'mock';
+export const aiName = aiProvider === 'gemini' ? 'Gemini' : aiProvider === 'claude' ? 'Claude' : 'AI';

@@ -2,7 +2,7 @@ import express from 'express';
 import multer from 'multer';
 import fs from 'node:fs';
 import path from 'node:path';
-import { config, paypalMock, aiMock, ROOT, UPLOAD_DIR } from './config.js';
+import { config, paypalMock, aiMock, aiProvider, aiModel, aiName, ROOT, UPLOAD_DIR } from './config.js';
 import { db, bus, save, emit, id, resetDb, getBounty, getSubmission, getMission } from './store.js';
 import * as paypal from './paypal.js';
 import {
@@ -43,7 +43,7 @@ app.get('/api/status', (_req, res) => {
   const paid = db.payouts.filter((p) => p.status === 'SUCCESS');
   res.json({
     paypal: paypal.paypalInfo(),
-    ai: { mode: aiMock ? 'mock' : 'live', model: config.anthropic.model },
+    ai: { mode: aiMock ? 'mock' : 'live', provider: aiProvider, name: aiName, model: aiModel },
     allowSimulatedGps: config.verify.allowSimulatedGps,
     agents: Object.fromEntries([...AGENTS].map((a) => [a, { wallet: walletView(a), policy: policyView(a), name: db.agents[a].name }])),
     stats: {
@@ -319,5 +319,5 @@ setInterval(pollPayouts, paypalMock ? 1500 : 5000);
 app.listen(config.port, () => {
   console.log(`\nGroundTruth running at http://localhost:${config.port}`);
   console.log(`  PayPal: ${paypalMock ? 'MOCK (add PAYPAL_CLIENT_ID/SECRET to .env for sandbox)' : config.paypal.env}`);
-  console.log(`  Claude: ${aiMock ? 'MOCK (add ANTHROPIC_API_KEY to .env)' : config.anthropic.model}\n`);
+  console.log(`  AI:     ${aiMock ? 'MOCK (add GEMINI_API_KEY or ANTHROPIC_API_KEY to .env)' : `${aiName} · ${aiModel}`}\n`);
 });
